@@ -1,7 +1,8 @@
-import type { Project, Story } from "./model"
+import type { Project, Story, Task } from "./model"
 
 const PROJECTS_KEY = "projects"
 const STORIES_KEY = "stories"
+const TASKS_KEY = "tasks";
 
 // --- SERWIS PROJEKTÓW ---
 export class ProjectService {
@@ -80,5 +81,37 @@ export class StoryService {
     const allStories = this.getAllFromStorage()
     const filteredList = allStories.filter(s => s.id !== id)
     localStorage.setItem(STORIES_KEY, JSON.stringify(filteredList))
+  }
+}
+export class TaskService {
+  private getAllFromStorage(): Task[] {
+    const data = localStorage.getItem(TASKS_KEY);
+    return data ? JSON.parse(data) : [];
+  }
+
+  getAll(): Task[] {
+    return this.getAllFromStorage();
+  }
+
+  create(task: Task) {
+    const tasks = this.getAllFromStorage();
+    tasks.push(task);
+    localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
+  }
+
+  update(task: Task) {
+    const tasks = this.getAllFromStorage().map(t =>
+      t.id === task.id ? task : t
+    );
+    localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
+  }
+
+  delete(id: string) {
+    const tasks = this.getAllFromStorage().filter(t => t.id !== id);
+    localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
+  }
+
+  getByStory(storyId: string): Task[] {
+    return this.getAllFromStorage().filter(t => t.storyId === storyId);
   }
 }
