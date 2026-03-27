@@ -1,21 +1,21 @@
-import { ProjectService, StoryService, TaskService} from "./service";
+import { ProjectService, StoryService, TaskService } from "./service";
 import { SessionService } from "./session";
 import type { Story, Priority, Status, Task } from "./model";
 
-// Inicjalizacja serwisów
+// --- SERWISY ---
 const projectService = new ProjectService();
 const storyService = new StoryService();
-const session = new SessionService();
 const taskService = new TaskService();
-// Elementy DOM - Użytkownik i Projekty
+const session = new SessionService();
+
+// --- DOM ---
 const userInfo = document.getElementById("user-info") as HTMLElement;
+
 const nameInput = document.getElementById("name") as HTMLInputElement;
 const descInput = document.getElementById("description") as HTMLInputElement;
 const addBtn = document.getElementById("addBtn") as HTMLButtonElement;
 const projectList = document.getElementById("projects") as HTMLUListElement;
-const taskUserSelect = document.getElementById("taskUser") as HTMLSelectElement;
 
-// Elementy DOM - Historyjki (Stories)
 const storySection = document.getElementById("story-section") as HTMLElement;
 const storyNameInput = document.getElementById("storyName") as HTMLInputElement;
 const storyDescInput = document.getElementById("storyDesc") as HTMLInputElement;
@@ -26,126 +26,67 @@ const taskNameInput = document.getElementById("taskName") as HTMLInputElement;
 const taskDescInput = document.getElementById("taskDesc") as HTMLInputElement;
 const taskPriorityInput = document.getElementById("taskPriority") as HTMLSelectElement;
 const taskTimeInput = document.getElementById("taskTime") as HTMLInputElement;
+const taskUserSelect = document.getElementById("taskUser") as HTMLSelectElement;
 const addTaskBtn = document.getElementById("addTaskBtn") as HTMLButtonElement;
 
+const themeToggle = document.getElementById("themeToggle") as HTMLInputElement;
+const finishTaskBtn = document.getElementById("finishTaskBtn") as HTMLButtonElement;
+
+// --- STATE ---
 let editingProjectId: string | null = null;
 let selectedStoryId: string | null = null;
 let selectedTask: Task | null = null;
-// --- LOGIKA UŻYTKOWNIKA ---
+
+// --- USER ---
 const user = session.getCurrentUser();
 userInfo.innerText = `Użytkownik: ${user.firstName} ${user.lastName}`;
 
-// --- RENDEROWANIE PROJEKTÓW ---
+// =====================
+// PROJECTS
+// =====================
 function renderProjects() {
   projectList.innerHTML = "";
   const projects = projectService.getAll();
   const activeProjectId = session.getActiveProjectId();
 
   projects.forEach(project => {
-    const li = document.createElement("div"); // Zmień li na div dla list-group-item
-li.className = `list-group-item list-group-item-action d-flex justify-content-between align-items-center ${project.id === activeProjectId ? "active-project" : ""}`;
-li.innerHTML = `
-  <div class="project-info" style="cursor:pointer; flex-grow: 1;">
-    <h6 class="mb-0">${project.name}</h6>
-    <small class="text-muted">${project.description.substring(0, 30)}...</small>
-  </div>
-  <div class="btn-group btn-group-sm">
-    <button class="btn btn-outline-secondary edit-btn">✏️</button>
-    <button class="btn btn-outline-danger delete-btn">🗑️</button>
-  </div>
-`;
+    const div = document.createElement("div");
 
-    // Wybór aktywnego projektu
-    li.querySelector(".project-info")?.addEventListener("click", () => {
+    div.className = `list-group-item d-flex justify-content-between ${project.id === activeProjectId ? "active-project" : ""}`;
+    div.innerHTML = `
+      <div class="project-info">
+        <b>${project.name}</b><br/>
+        <small>${project.description}</small>
+      </div>
+      <div>
+        <button class="edit">✏️</button>
+        <button class="delete">🗑️</button>
+      </div>
+    `;
+
+    div.querySelector(".project-info")?.addEventListener("click", () => {
       session.setActiveProject(project.id);
       renderProjects();
       renderStories();
     });
 
-    // Edycja
-    li.querySelector(".edit-btn")?.addEventListener("click", (e) => {
+    div.querySelector(".edit")?.addEventListener("click", (e) => {
       e.stopPropagation();
+      editingProjectId = project.id;
       nameInput.value = project.name;
       descInput.value = project.description;
-      editingProjectId = project.id;
-      addBtn.innerText = "Zapisz zmiany";
     });
 
-    // Usuwanie
-    li.querySelector(".delete-btn")?.addEventListener("click", (e) => {
+    div.querySelector(".delete")?.addEventListener("click", (e) => {
       e.stopPropagation();
       projectService.delete(project.id);
-      if (session.getActiveProjectId() === project.id) {
-        localStorage.removeItem("active_project_id");
-      }
       renderProjects();
       renderStories();
     });
 
-    projectList.appendChild(li);
+    projectList.appendChild(div);
   });
 }
-
-// --- RENDEROWANIE HISTORYJEK (BOARD) ---
-function renderStories() {
-  const activeProjectId = session.getActiveProjectId();
-  
-  if (!activeProjectId) {
-    storySection.style.display = "none";
-    return;
-  }
-
-  storySection.style.display = "block";
-  const stories = storyService.getAll(activeProjectId);
-
-  const cols = {
-    todo: document.getElementById("col-todo")!,
-    doing: document.getElementById("col-doing")!,
-    done: document.getElementById("col-done")!
-  };
-
-  // Czyścimy kolumny
-  Object.values(cols).forEach(c => c.innerHTML = "");
-
-  stories.forEach(story => {
-    const div = document.createElement("div");
-const priorityColor = story.priority === 'high' ? 'danger' : (story.priority === 'medium' ? 'warning' : 'success');
-div.addEventListener("click", () => {
-  selectedStoryId = story.id;
-  renderTasks(story.id);
-});
-div.className = `card shadow-sm mb-2 story-card border-start border-4 border-${priorityColor}`;
-div.innerHTML = `
-  <div class="card-body p-2">
-    <h6 class="card-title mb-1">${story.name}</h6>
-    <p class="card-text small text-muted mb-2">${story.description}</p>
-    <button class="btn btn-sm btn-light w-100 next-status-btn">➔ Przesuń</button>
-  </div>
-`;
-
-    div.querySelector(".next-status-btn")?.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const nextStatus: Record<Status, Status> = {
-            'todo': 'doing',
-            'doing': 'done',
-            'done': 'todo'
-        };
-        story.status = nextStatus[story.status];
-        storyService.update(story);
-        renderStories();
-
-          if (selectedStoryId === story.id) {
-        renderTasks(story.id);
-    }
-    });
-
-    cols[story.status].appendChild(div);
-  });
-}
-
-// --- EVENT LISTENERY ---
-
-// Dodawanie/Edycja Projektu
 addBtn.addEventListener("click", () => {
   if (editingProjectId) {
     projectService.update({
@@ -153,6 +94,7 @@ addBtn.addEventListener("click", () => {
       name: nameInput.value,
       description: descInput.value
     });
+
     editingProjectId = null;
     addBtn.innerText = "Dodaj projekt";
   } else {
@@ -162,69 +104,101 @@ addBtn.addEventListener("click", () => {
       description: descInput.value
     });
   }
+
   nameInput.value = "";
   descInput.value = "";
+
   renderProjects();
 });
+// =====================
+// STORIES
+// =====================
 
-// Dodawanie Historyjki
 addStoryBtn.addEventListener("click", () => {
-  const activeId = session.getActiveProjectId();
-  if (!activeId) return;
+  const projectId = session.getActiveProjectId();
+
+  if (!projectId) {
+    alert("Najpierw wybierz projekt!");
+    return;
+  }
 
   const newStory: Story = {
     id: crypto.randomUUID(),
     name: storyNameInput.value,
     description: storyDescInput.value,
     priority: storyPriority.value as Priority,
-    projectId: activeId,
+    projectId: projectId,
     ownerId: session.getCurrentUser().id,
     createdAt: new Date().toISOString(),
-    status: 'todo'
+    status: "todo"
   };
 
   storyService.create(newStory);
+
+  // reset inputów
   storyNameInput.value = "";
   storyDescInput.value = "";
+
   renderStories();
 });
-function assignUserToTask(task: Task, userId: string) {
-  task.assignedUserId = userId;
-  task.status = "doing";
-  task.startedAt = new Date().toISOString();
 
-  taskService.update(task);
-
-  // 🔥 update story
-  const story = storyService.getAll(task.storyId).find(s => s.id === task.storyId);
-  if (story && story.status === "todo") {
-    story.status = "doing";
-    storyService.update(story);
+function renderStories() {
+  const projectId = session.getActiveProjectId();
+  if (!projectId) {
+    storySection.style.display = "none";
+    return;
   }
-}
 
-function finishTask(task: Task) {
-  task.status = "done";
-  task.finishedAt = new Date().toISOString();
+  storySection.style.display = "block";
 
-  taskService.update(task);
+  const stories = storyService.getAll(projectId);
 
-  // 🔥 sprawdzamy czy wszystkie taski skończone
-  const tasks = taskService.getByStory(task.storyId);
-  const allDone = tasks.every(t => t.status === "done");
+  const cols = {
+    todo: document.getElementById("col-todo")!,
+    doing: document.getElementById("col-doing")!,
+    done: document.getElementById("col-done")!
+  };
 
-  if (allDone) {
-    const story = storyService.getAll(task.storyId).find(s => s.id === task.storyId);
-    if (story) {
-      story.status = "done";
+  Object.values(cols).forEach(c => c.innerHTML = "");
+
+  stories.forEach(story => {
+    const div = document.createElement("div");
+
+    div.className = "card p-2 mb-2";
+    div.innerHTML = `
+      <b>${story.name}</b>
+      <button class="next">➔</button>
+    `;
+
+    div.addEventListener("click", () => {
+      selectedStoryId = story.id;
+      renderTasks(story.id);
+    });
+
+    div.querySelector(".next")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+
+      const next: Record<Status, Status> = {
+        todo: "doing",
+        doing: "done",
+        done: "todo"
+      };
+
+      story.status = next[story.status];
       storyService.update(story);
-    }
-  }
+      renderStories();
+    });
+
+    cols[story.status].appendChild(div);
+  });
 }
 
+// =====================
+// TASKS
+// =====================
 function renderTasks(storyId: string) {
   const tasks = taskService.getByStory(storyId);
-  console.log("TASKI:", tasks);
+
   const cols = {
     todo: document.getElementById("col-todo")!,
     doing: document.getElementById("col-doing")!,
@@ -235,21 +209,21 @@ function renderTasks(storyId: string) {
 
   tasks.forEach(task => {
     const div = document.createElement("div");
-    div.addEventListener("click", () => {
-  showTaskDetails(task);
-});
-    div.className = "card mb-2 p-2";
-    const assignedUser = session.getAllUsers()
-  .find(u => u.id === task.assignedUserId);
 
-div.innerHTML = `
-  <b>${task.name}</b><br/>
-  <small>${task.description}</small><br/>
-  <small>👤 ${assignedUser ? assignedUser.firstName : "Nieprzypisany"}</small>
-  <button class="done">Done</button>
-`;
+    const assigned = session.getAllUsers()
+      .find(u => u.id === task.assignedUserId);
 
-    div.querySelector(".done")?.addEventListener("click", () => {
+    div.className = "card p-2 mb-2";
+    div.innerHTML = `
+      <b>${task.name}</b><br/>
+      <small>${assigned ? assigned.firstName : "Brak osoby"}</small>
+      <button class="done">Done</button>
+    `;
+
+    div.addEventListener("click", () => showTaskDetails(task));
+
+    div.querySelector(".done")?.addEventListener("click", (e) => {
+      e.stopPropagation();
       finishTask(task);
       renderTasks(storyId);
     });
@@ -257,96 +231,127 @@ div.innerHTML = `
     cols[task.status].appendChild(div);
   });
 }
-addTaskBtn.addEventListener("click", () => {
-  if (!selectedStoryId) {
-    alert("Wybierz story!");
-    return;
+
+// =====================
+// TASK ACTIONS
+// =====================
+function assignUserToTask(task: Task, userId: string) {
+  task.assignedUserId = userId;
+  task.status = "doing";
+  task.startedAt = new Date().toISOString();
+  taskService.update(task);
+}
+
+function finishTask(task: Task) {
+  task.status = "done";
+  task.finishedAt = new Date().toISOString();
+  taskService.update(task);
+
+  const tasks = taskService.getByStory(task.storyId);
+  const allDone = tasks.every(t => t.status === "done");
+
+  if (allDone) {
+    const story = storyService
+      .getAll(session.getActiveProjectId()!)
+      .find(s => s.id === task.storyId);
+
+    if (story) {
+      story.status = "done";
+      storyService.update(story);
+    }
   }
-
-  const newTask: Task = {
-    id: crypto.randomUUID(),
-    name: taskNameInput.value,
-    description: taskDescInput.value,
-    priority: taskPriorityInput.value as Priority,
-    storyId: selectedStoryId,
-
-    estimatedTime: Number(taskTimeInput.value),
-
-    status: "todo",
-    createdAt: new Date().toISOString()
-  };
-
-  if (taskUserSelect.value) {
-  newTask.assignedUserId = taskUserSelect.value;
-  newTask.status = "doing";
-  newTask.startedAt = new Date().toISOString();
 }
 
-taskService.create(newTask);
-
-  // reset
-  taskNameInput.value = "";
-  taskDescInput.value = "";
-  taskTimeInput.value = "";
-
-  renderTasks(selectedStoryId);
-});
-function loadUsersToSelect() {
-  const users = session.getAllUsers()
-    .filter(u => u.role !== "admin");
-
-  taskUserSelect.innerHTML = `<option value="">Przypisz użytkownika</option>`;
-
-  users.forEach(user => {
-    const option = document.createElement("option");
-    option.value = user.id;
-    option.textContent = `${user.firstName} ${user.lastName} (${user.role})`;
-    taskUserSelect.appendChild(option);
-  });
-}
+// =====================
+// TASK DETAILS (MODAL)
+// =====================
 function showTaskDetails(task: Task) {
   selectedTask = task;
 
-  const assignedUser = session.getAllUsers()
-    .find(u => u.id === task.assignedUserId);
-
-  const story = storyService
-    .getAll(session.getActiveProjectId()!)
-    .find(s => s.id === task.storyId);
-
   const details = document.getElementById("taskDetails")!;
-
   details.innerHTML = `
-    <p><b>Nazwa:</b> ${task.name}</p>
-    <p><b>Opis:</b> ${task.description}</p>
-    <p><b>Priorytet:</b> ${task.priority}</p>
-    <p><b>Status:</b> ${task.status}</p>
-    <p><b>Story:</b> ${story?.name}</p>
-    <p><b>Przewidywany czas:</b> ${task.estimatedTime}h</p>
-    <p><b>Start:</b> ${task.startedAt ?? "-"}</p>
-    <p><b>Koniec:</b> ${task.finishedAt ?? "-"}</p>
-    <p><b>Użytkownik:</b> ${assignedUser ? assignedUser.firstName : "-"}</p>
+    <p>${task.name}</p>
+    <p>Status: ${task.status}</p>
   `;
 
-  // @ts-ignore (bootstrap global)
-  const modal = new bootstrap.Modal(document.getElementById("taskModal"));
-  modal.show();
+  // @ts-ignore
+  new bootstrap.Modal(document.getElementById("taskModal")).show();
 }
-const finishTaskBtn = document.getElementById("finishTaskBtn") as HTMLButtonElement;
 
 finishTaskBtn.addEventListener("click", () => {
   if (!selectedTask) return;
 
   finishTask(selectedTask);
-
   renderTasks(selectedTask.storyId);
 
-  // zamknięcie modala
-  const modalEl = document.getElementById("taskModal")!;
   // @ts-ignore
-  const modal = bootstrap.Modal.getInstance(modalEl);
-  modal.hide();
+  bootstrap.Modal.getInstance(document.getElementById("taskModal")).hide();
 });
-// Start aplikacji
+
+// =====================
+// ADD TASK
+// =====================
+addTaskBtn.addEventListener("click", () => {
+ if (!selectedStoryId) {
+  alert("Najpierw wybierz story!");
+  return;
+}
+
+  const task: Task = {
+    id: crypto.randomUUID(),
+    name: taskNameInput.value,
+    description: taskDescInput.value,
+    priority: taskPriorityInput.value as Priority,
+    storyId: selectedStoryId,
+    estimatedTime: Number(taskTimeInput.value),
+    status: "todo",
+    createdAt: new Date().toISOString()
+  };
+
+  taskService.create(task);
+
+if (taskUserSelect.value) {
+  assignUserToTask(task, taskUserSelect.value);
+}
+
+  renderTasks(selectedStoryId);
+});
+
+// =====================
+// USERS
+// =====================
+function loadUsers() {
+  const users = session.getAllUsers().filter(u => u.role !== "admin");
+
+  taskUserSelect.innerHTML = `<option value="">Wybierz</option>`;
+
+  users.forEach(u => {
+    const option = document.createElement("option");
+    option.value = u.id;
+    option.textContent = `${u.firstName} (${u.role})`;
+    taskUserSelect.appendChild(option);
+  });
+}
+
+// =====================
+// THEME
+// =====================
+function setTheme(isDark: boolean) {
+  document.body.classList.toggle("dark", isDark);
+  localStorage.setItem("theme", isDark ? "dark" : "light");
+  themeToggle.checked = isDark;
+}
+
+themeToggle.addEventListener("change", () => {
+  setTheme(themeToggle.checked);
+});
+
+const savedTheme = localStorage.getItem("theme");
+setTheme(savedTheme === "dark");
+
+// =====================
+// INIT
+// =====================
 renderProjects();
-loadUsersToSelect();
+renderStories();
+loadUsers();
