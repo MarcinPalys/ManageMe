@@ -82,6 +82,10 @@ export class StoryService {
     const filteredList = allStories.filter(s => s.id !== id)
     localStorage.setItem(STORIES_KEY, JSON.stringify(filteredList))
   }
+
+  getById(id: string): Story | undefined {
+    return this.getAllFromStorage().find(s => s.id === id)
+  }
 }
 export class TaskService {
   private getAllFromStorage(): Task[] {
