@@ -1,17 +1,31 @@
 import { ProjectService, StoryService, TaskService } from './service'
-import { SessionService } from './session'
+import { AuthService } from './auth'
 import { NotificationService } from './notification'
-import type { Story, Priority, Status, Task, Notification } from './model'
+import { GOOGLE_CLIENT_ID } from './config'
+import type { Story, Priority, Status, Task, Notification, User, UserRole } from './model'
+
+declare const google: any
 
 // --- SERWISY ---
 const projectService = new ProjectService()
 const storyService = new StoryService()
 const taskService = new TaskService()
-const session = new SessionService()
+const authService = new AuthService()
 const notificationService = new NotificationService()
 
-// --- DOM: GŁÓWNE ---
+// --- DOM: AUTH ---
+const loginView = document.getElementById('login-view') as HTMLElement
+const guestView = document.getElementById('guest-view') as HTMLElement
+const blockedView = document.getElementById('blocked-view') as HTMLElement
+const appWrapper = document.getElementById('app-wrapper') as HTMLElement
+const navbarControls = document.getElementById('navbar-controls') as HTMLElement
+
+// --- DOM: NAVBAR ---
 const userInfo = document.getElementById('user-info') as HTMLElement
+const usersNavLink = document.getElementById('users-nav-link') as HTMLAnchorElement
+const logoutBtn = document.getElementById('logoutBtn') as HTMLButtonElement
+
+// --- DOM: GŁÓWNE ---
 const nameInput = document.getElementById('name') as HTMLInputElement
 const descInput = document.getElementById('description') as HTMLInputElement
 const addBtn = document.getElementById('addBtn') as HTMLButtonElement
@@ -41,20 +55,139 @@ const markAllReadBtn = document.getElementById('markAllReadBtn') as HTMLButtonEl
 const backToMainBtn = document.getElementById('backToMainBtn') as HTMLButtonElement
 const notifPopupEl = document.getElementById('notif-popup') as HTMLElement
 
+// --- DOM: UŻYTKOWNICY ---
+const usersView = document.getElementById('users-view') as HTMLElement
+const usersListEl = document.getElementById('users-list') as HTMLElement
+const backToMainFromUsersBtn = document.getElementById('backToMainFromUsersBtn') as HTMLButtonElement
+
 // --- STATE ---
+let currentUser: User | null = null
 let editingProjectId: string | null = null
 let selectedStoryId: string | null = null
 let selectedTask: Task | null = null
-let currentView: 'main' | 'notifications' = 'main'
+let currentView: 'main' | 'notifications' | 'users' = 'main'
 let notifPopupQueue: Notification[] = []
 let notifPopupVisible = false
 
-// --- USER ---
-const user = session.getCurrentUser()
-userInfo.innerText = `${user.firstName} ${user.lastName}`
+// =====================
+// AUTH & ROUTING
+// =====================
+
+function routeByRole(): void {
+  currentUser = authService.getCurrentUser()
+
+  if (!currentUser) {
+    showScreen('login')
+    return
+  }
+
+  if (currentUser.blocked) {
+    showScreen('blocked')
+    document.getElementById('blocked-user-name')!.textContent =
+      `${currentUser.firstName} ${currentUser.lastName}`
+    return
+  }
+
+  if (currentUser.role === 'guest') {
+    showScreen('guest')
+    document.getElementById('guest-user-name')!.textContent =
+      `${currentUser.firstName} ${currentUser.lastName}`
+    return
+  }
+
+  userInfo.textContent = `${currentUser.firstName} ${currentUser.lastName}`
+  updateNotifBadge()
+  renderProjects()
+  renderStories()
+  loadUsers()
+  showScreen('app')
+  usersNavLink.style.display = currentUser.role === 'admin' ? '' : 'none'
+}
+
+function showScreen(screen: 'login' | 'guest' | 'blocked' | 'app'): void {
+  loginView.style.display = screen === 'login' ? '' : 'none'
+  guestView.style.display = screen === 'guest' ? '' : 'none'
+  blockedView.style.display = screen === 'blocked' ? '' : 'none'
+  appWrapper.style.display = screen === 'app' ? '' : 'none'
+
+  if (screen === 'login') {
+    navbarControls.style.display = 'none'
+  } else {
+    navbarControls.style.display = 'flex'
+    notifBadgeLink.style.display = screen === 'app' ? '' : 'none'
+    notifNavLink.style.display = screen === 'app' ? '' : 'none'
+    if (screen !== 'app') usersNavLink.style.display = 'none'
+  }
+
+  if (screen === 'app') {
+    showView('main')
+  }
+}
+
+function logout(): void {
+  if (typeof google !== 'undefined' && google.accounts?.id) {
+    google.accounts.id.disableAutoSelect()
+  }
+  authService.logout()
+  currentUser = null
+  routeByRole()
+}
+
+logoutBtn.addEventListener('click', logout)
+document.getElementById('logoutBtnGuest')?.addEventListener('click', logout)
+document.getElementById('logoutBtnBlocked')?.addEventListener('click', logout)
 
 // =====================
-// POWIADOMIENIA - SERWIS
+// GOOGLE AUTH
+// =====================
+
+function handleGoogleResponse(response: { credential: string }): void {
+  const { user, isNew } = authService.handleGoogleCredential(response.credential)
+  currentUser = user
+
+  if (isNew && user.role === 'guest') {
+    authService.getAdmins().forEach(admin => {
+      notificationService.create({
+        id: crypto.randomUUID(),
+        title: 'Nowe konto użytkownika',
+        message: `${user.firstName} ${user.lastName} (${user.email}) zarejestrował się i oczekuje na zatwierdzenie.`,
+        priority: 'high',
+        date: new Date().toISOString(),
+        isRead: false,
+        recipientId: admin.id
+      })
+    })
+  }
+
+  routeByRole()
+}
+
+function initGoogleAuth(): void {
+  if (!GOOGLE_CLIENT_ID) {
+    const warn = document.getElementById('google-config-warning')
+    if (warn) warn.style.display = ''
+    return
+  }
+
+  if (typeof google === 'undefined' || !google.accounts?.id) {
+    setTimeout(initGoogleAuth, 100)
+    return
+  }
+
+  google.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    callback: handleGoogleResponse,
+    auto_select: false
+  })
+
+  google.accounts.id.renderButton(
+    document.getElementById('google-signin-btn'),
+    { theme: 'outline', size: 'large', text: 'signin_with', locale: 'pl', width: 280 }
+  )
+}
+
+// =====================
+// POWIADOMIENIA
 // =====================
 
 function priorityBadgeClass(priority: string): string {
@@ -64,6 +197,7 @@ function priorityBadgeClass(priority: string): string {
 }
 
 function sendNotification(partial: Omit<Notification, 'id' | 'date' | 'isRead'>): void {
+  if (!currentUser) return
   const notification: Notification = {
     ...partial,
     id: crypto.randomUUID(),
@@ -74,7 +208,7 @@ function sendNotification(partial: Omit<Notification, 'id' | 'date' | 'isRead'>)
   updateNotifBadge()
 
   if (
-    notification.recipientId === user.id &&
+    notification.recipientId === currentUser.id &&
     (notification.priority === 'medium' || notification.priority === 'high')
   ) {
     notifPopupQueue.push(notification)
@@ -83,7 +217,8 @@ function sendNotification(partial: Omit<Notification, 'id' | 'date' | 'isRead'>)
 }
 
 function updateNotifBadge(): void {
-  const count = notificationService.getUnreadCount(user.id)
+  if (!currentUser) return
+  const count = notificationService.getUnreadCount(currentUser.id)
   notifCount.textContent = String(count)
   notifCount.style.display = count > 0 ? 'inline' : 'none'
 }
@@ -136,18 +271,25 @@ function showNextPopup(): void {
 }
 
 // =====================
-// WIDOK POWIADOMIEŃ
+// WIDOKI APLIKACJI
 // =====================
 
-function showView(view: 'main' | 'notifications'): void {
+function showView(view: 'main' | 'notifications' | 'users'): void {
   currentView = view
   mainView.style.display = view === 'main' ? '' : 'none'
   notificationsView.style.display = view === 'notifications' ? '' : 'none'
+  usersView.style.display = view === 'users' ? '' : 'none'
   if (view === 'notifications') renderNotificationsList()
+  if (view === 'users') renderUsersView()
 }
 
+// =====================
+// WIDOK POWIADOMIEŃ
+// =====================
+
 function renderNotificationsList(): void {
-  const notifications = notificationService.getForUser(user.id)
+  if (!currentUser) return
+  const notifications = notificationService.getForUser(currentUser.id)
 
   if (notifications.length === 0) {
     notificationsList.innerHTML = '<p class="text-center text-muted mt-5 py-5">Brak powiadomień</p>'
@@ -187,7 +329,6 @@ function showNotificationDetail(id: string): void {
   const notif = notificationService.getById(id)
   if (!notif) return
 
-  // Oznacz jako przeczytane przy wejściu na szczegóły
   if (!notif.isRead) {
     notificationService.markAsRead(id)
     updateNotifBadge()
@@ -222,15 +363,114 @@ function showNotificationDetail(id: string): void {
   new bootstrap.Modal(document.getElementById('notif-detail-modal')).show()
 }
 
-// Nawigacja
 notifBadgeLink.addEventListener('click', e => { e.preventDefault(); showView('notifications') })
 notifNavLink.addEventListener('click', e => { e.preventDefault(); showView('notifications') })
 backToMainBtn.addEventListener('click', () => showView('main'))
 markAllReadBtn.addEventListener('click', () => {
-  notificationService.markAllAsRead(user.id)
+  if (!currentUser) return
+  notificationService.markAllAsRead(currentUser.id)
   updateNotifBadge()
   renderNotificationsList()
 })
+
+// =====================
+// WIDOK UŻYTKOWNIKÓW (admin)
+// =====================
+
+const ROLE_LABELS: Record<string, string> = {
+  guest: 'Gość', developer: 'Developer', devops: 'DevOps', admin: 'Admin'
+}
+
+function renderUsersView(): void {
+  if (!currentUser || currentUser.role !== 'admin') return
+
+  const users = authService.getAllUsers()
+
+  if (users.length === 0) {
+    usersListEl.innerHTML = '<p class="text-center text-muted">Brak użytkowników</p>'
+    return
+  }
+
+  usersListEl.innerHTML = `
+    <div class="table-responsive">
+      <table class="table table-striped align-middle">
+        <thead>
+          <tr>
+            <th>Imię i nazwisko</th>
+            <th>Email</th>
+            <th>Rola</th>
+            <th>Status</th>
+            <th>Akcje</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${users.map(u => `
+            <tr data-user-id="${u.id}">
+              <td>${u.firstName} ${u.lastName}</td>
+              <td class="small text-muted">${u.email}</td>
+              <td>
+                <select class="form-select form-select-sm role-select" style="width:auto"
+                  ${u.id === currentUser!.id ? 'disabled title="Nie możesz zmienić własnej roli"' : ''}>
+                  <option value="guest"      ${u.role === 'guest'     ? 'selected' : ''}>Gość</option>
+                  <option value="developer"  ${u.role === 'developer' ? 'selected' : ''}>Developer</option>
+                  <option value="devops"     ${u.role === 'devops'    ? 'selected' : ''}>DevOps</option>
+                  <option value="admin"      ${u.role === 'admin'     ? 'selected' : ''}>Admin</option>
+                </select>
+              </td>
+              <td>
+                <span class="badge ${u.blocked ? 'bg-danger' : 'bg-success'}">
+                  ${u.blocked ? 'Zablokowany' : 'Aktywny'}
+                </span>
+              </td>
+              <td>
+                ${u.id !== currentUser!.id ? `
+                  <button class="btn btn-sm ${u.blocked ? 'btn-outline-success' : 'btn-outline-danger'} toggle-block">
+                    ${u.blocked ? 'Odblokuj' : 'Zablokuj'}
+                  </button>
+                ` : '<small class="text-muted">(Ty)</small>'}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `
+
+  usersListEl.querySelectorAll('.role-select').forEach(selectEl => {
+    selectEl.addEventListener('change', () => {
+      const tr = selectEl.closest('tr') as HTMLElement
+      const userId = tr.dataset.userId!
+      const newRole = (selectEl as HTMLSelectElement).value as UserRole
+      const u = authService.getAllUsers().find(x => x.id === userId)!
+      const oldRole = u.role
+      u.role = newRole
+      authService.updateUser(u)
+
+      if (newRole !== oldRole) {
+        sendNotification({
+          title: 'Zmiana roli',
+          message: `Twoja rola została zmieniona z „${ROLE_LABELS[oldRole]}" na „${ROLE_LABELS[newRole]}".`,
+          priority: 'medium',
+          recipientId: userId
+        })
+      }
+    })
+  })
+
+  usersListEl.querySelectorAll('.toggle-block').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tr = btn.closest('tr') as HTMLElement
+      const userId = tr.dataset.userId!
+      const u = authService.getAllUsers().find(x => x.id === userId)!
+      u.blocked = !u.blocked
+      authService.updateUser(u)
+      renderUsersView()
+    })
+  })
+}
+
+usersNavLink?.addEventListener('click', e => { e.preventDefault(); showView('users') })
+backToMainFromUsersBtn?.addEventListener('click', () => showView('main'))
 
 // =====================
 // PROJEKTY
@@ -239,7 +479,7 @@ markAllReadBtn.addEventListener('click', () => {
 function renderProjects(): void {
   projectList.innerHTML = ''
   const projects = projectService.getAll()
-  const activeProjectId = session.getActiveProjectId()
+  const activeProjectId = authService.getActiveProjectId()
 
   projects.forEach(project => {
     const div = document.createElement('div')
@@ -256,7 +496,7 @@ function renderProjects(): void {
     `
 
     div.querySelector('.project-info')?.addEventListener('click', () => {
-      session.setActiveProject(project.id)
+      authService.setActiveProject(project.id)
       renderProjects()
       renderStories()
     })
@@ -281,7 +521,7 @@ function renderProjects(): void {
 }
 
 addBtn.addEventListener('click', () => {
-  if (!nameInput.value.trim()) return
+  if (!nameInput.value.trim() || !currentUser) return
 
   if (editingProjectId) {
     projectService.update({
@@ -299,8 +539,7 @@ addBtn.addEventListener('click', () => {
     }
     projectService.create(newProject)
 
-    // Powiadomienie: nowy projekt → wszyscy adminowie (high)
-    session.getAllUsers()
+    authService.getAllUsers()
       .filter(u => u.role === 'admin')
       .forEach(admin => {
         sendNotification({
@@ -322,9 +561,9 @@ addBtn.addEventListener('click', () => {
 // =====================
 
 addStoryBtn.addEventListener('click', () => {
-  const projectId = session.getActiveProjectId()
+  const projectId = authService.getActiveProjectId()
   if (!projectId) { alert('Najpierw wybierz projekt!'); return }
-  if (!storyNameInput.value.trim()) return
+  if (!storyNameInput.value.trim() || !currentUser) return
 
   const newStory: Story = {
     id: crypto.randomUUID(),
@@ -332,7 +571,7 @@ addStoryBtn.addEventListener('click', () => {
     description: storyDescInput.value,
     priority: storyPriority.value as Priority,
     projectId,
-    ownerId: user.id,
+    ownerId: currentUser.id,
     createdAt: new Date().toISOString(),
     status: 'todo'
   }
@@ -344,7 +583,7 @@ addStoryBtn.addEventListener('click', () => {
 })
 
 function renderStories(): void {
-  const projectId = session.getActiveProjectId()
+  const projectId = authService.getActiveProjectId()
   if (!projectId) {
     storySection.style.display = 'none'
     return
@@ -393,6 +632,7 @@ function renderStories(): void {
 
 function renderTasks(storyId: string): void {
   const tasks = taskService.getByStory(storyId)
+  const allUsers = authService.getAllUsers()
 
   const cols = {
     todo: document.getElementById('col-todo')!,
@@ -403,7 +643,7 @@ function renderTasks(storyId: string): void {
 
   tasks.forEach(task => {
     const div = document.createElement('div')
-    const assigned = session.getAllUsers().find(u => u.id === task.assignedUserId)
+    const assigned = allUsers.find(u => u.id === task.assignedUserId)
     div.className = 'card p-2 mb-2'
     div.style.cursor = 'pointer'
     div.innerHTML = `
@@ -445,7 +685,6 @@ function assignUserToTask(task: Task, userId: string): void {
 
   const story = storyService.getById(task.storyId)
 
-  // Powiadomienie: zmiana statusu → doing (low, właściciel historyjki)
   if (story) {
     sendNotification({
       title: 'Zadanie w trakcie realizacji',
@@ -455,7 +694,6 @@ function assignUserToTask(task: Task, userId: string): void {
     })
   }
 
-  // Powiadomienie: przypisanie osoby do zadania (high, przypisana osoba)
   sendNotification({
     title: 'Przypisano Cię do zadania',
     message: `Zostałeś przypisany do zadania „${task.name}"${story ? ` w historyjce „${story.name}"` : ''}.`,
@@ -471,7 +709,6 @@ function finishTask(task: Task): void {
 
   const story = storyService.getById(task.storyId)
 
-  // Powiadomienie: zmiana statusu → done (medium, właściciel historyjki)
   if (story) {
     sendNotification({
       title: 'Zadanie ukończone',
@@ -481,7 +718,6 @@ function finishTask(task: Task): void {
     })
   }
 
-  // Auto-complete historyjki gdy wszystkie taski done
   const tasks = taskService.getByStory(task.storyId)
   const allDone = tasks.every(t => t.status === 'done')
   if (allDone && story) {
@@ -494,7 +730,6 @@ function deleteTask(task: Task): void {
   const story = storyService.getById(task.storyId)
   taskService.delete(task.id)
 
-  // Powiadomienie: usunięcie zadania (medium, właściciel historyjki)
   if (story) {
     sendNotification({
       title: 'Zadanie usunięte',
@@ -511,7 +746,8 @@ function deleteTask(task: Task): void {
 
 function showTaskDetails(task: Task): void {
   selectedTask = task
-  const assigned = session.getAllUsers().find(u => u.id === task.assignedUserId)
+  const allUsers = authService.getAllUsers()
+  const assigned = allUsers.find(u => u.id === task.assignedUserId)
 
   document.getElementById('taskDetails')!.innerHTML = `
     <p><strong>${task.name}</strong></p>
@@ -543,7 +779,7 @@ finishTaskBtn.addEventListener('click', () => {
 
 addTaskBtn.addEventListener('click', () => {
   if (!selectedStoryId) { alert('Najpierw wybierz historyjkę!'); return }
-  if (!taskNameInput.value.trim()) return
+  if (!taskNameInput.value.trim() || !currentUser) return
 
   const task: Task = {
     id: crypto.randomUUID(),
@@ -558,7 +794,6 @@ addTaskBtn.addEventListener('click', () => {
 
   taskService.create(task)
 
-  // Powiadomienie: nowy task w historyjce (medium, właściciel historyjki)
   const story = storyService.getById(selectedStoryId)
   if (story) {
     sendNotification({
@@ -582,11 +817,11 @@ addTaskBtn.addEventListener('click', () => {
 })
 
 // =====================
-// UŻYTKOWNICY
+// UŻYTKOWNICY (task assignment)
 // =====================
 
 function loadUsers(): void {
-  const users = session.getAllUsers().filter(u => u.role !== 'admin')
+  const users = authService.getAllUsers().filter(u => !u.blocked && u.role !== 'guest')
   taskUserSelect.innerHTML = '<option value="">Wybierz</option>'
   users.forEach(u => {
     const option = document.createElement('option')
@@ -612,7 +847,6 @@ setTheme(localStorage.getItem('theme') === 'dark')
 // =====================
 // INIT
 // =====================
-renderProjects()
-renderStories()
-loadUsers()
-updateNotifBadge()
+
+initGoogleAuth()
+routeByRole()

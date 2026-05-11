@@ -1,41 +1,22 @@
-import type { User } from "./model";
+import { AuthService } from './auth'
+import type { User } from './model'
+
+const _auth = new AuthService()
 
 export class SessionService {
-  // Mock użytkownika
-  private readonly users: User[] = [
-  {
-    id: "1",
-    firstName: "Marcin",
-    lastName: "Palys",
-    role: "admin"
-  },
-  {
-    id: "2",
-    firstName: "Jan",
-    lastName: "Developer",
-    role: "developer"
-  },
-  {
-    id: "3",
-    firstName: "Anna",
-    lastName: "DevOps",
-    role: "devops"
+  getCurrentUser(): User | null {
+    return _auth.getCurrentUser()
   }
-];
-  getCurrentUser(): User {
-  return this.users.find(u => u.role === "admin")!;
-}
 
-  // Zarządzanie aktywnym projektem w LocalStorage
-  setActiveProject(projectId: string) {
-    localStorage.setItem("active_project_id", projectId);
+  setActiveProject(projectId: string): void {
+    _auth.setActiveProject(projectId)
   }
 
   getActiveProjectId(): string | null {
-    return localStorage.getItem("active_project_id");
+    return _auth.getActiveProjectId()
   }
 
   getAllUsers(): User[] {
-    return this.users;
+    return _auth.getAllUsers()
   }
 }
