@@ -1,22 +1,21 @@
-import type { Project } from "./model";
-import { ProjectService } from "./service";
+import type { Project } from './model'
+import { ProjectService } from './service'
 
-const service = new ProjectService();
+const service = new ProjectService()
 
-export function addProject(name: string, description: string) {
+export async function addProject(name: string, description: string): Promise<void> {
   const project: Project = {
     id: crypto.randomUUID(),
     name,
     description
-  };
-
-  service.create(project);
+  }
+  await service.create(project)
 }
 
-export function getProjects(): Project[] {
-  return service.getAll();
+export async function getProjects(): Promise<Project[]> {
+  return service.getAll()
 }
 
-export function deleteProject(id: string) {
-  service.delete(id);
+export async function deleteProject(id: string): Promise<void> {
+  await service.delete(id)
 }

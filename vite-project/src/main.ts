@@ -2,6 +2,7 @@ import { ProjectService, StoryService, TaskService } from './service'
 import { AuthService } from './auth'
 import { NotificationService } from './notification'
 import { GOOGLE_CLIENT_ID } from './config'
+import { initStorage } from './storage'
 import type { Story, Priority, Status, Task, Notification, User, UserRole } from './model'
 
 declare const google: any
@@ -73,8 +74,8 @@ let notifPopupVisible = false
 // AUTH & ROUTING
 // =====================
 
-function routeByRole(): void {
-  currentUser = authService.getCurrentUser()
+async function routeByRole(): Promise<void> {
+  currentUser = await authService.getCurrentUser()
 
   if (!currentUser) {
     showScreen('login')
@@ -96,12 +97,9 @@ function routeByRole(): void {
   }
 
   userInfo.textContent = `${currentUser.firstName} ${currentUser.lastName}`
-  updateNotifBadge()
-  renderProjects()
-  renderStories()
-  loadUsers()
   showScreen('app')
   usersNavLink.style.display = currentUser.role === 'admin' ? '' : 'none'
+  await Promise.all([updateNotifBadge(), renderProjects(), renderStories(), loadUsers()])
 }
 
 function showScreen(screen: 'login' | 'guest' | 'blocked' | 'app'): void {
@@ -141,25 +139,23 @@ document.getElementById('logoutBtnBlocked')?.addEventListener('click', logout)
 // GOOGLE AUTH
 // =====================
 
-function handleGoogleResponse(response: { credential: string }): void {
-  const { user, isNew } = authService.handleGoogleCredential(response.credential)
+async function handleGoogleResponse(response: { credential: string }): Promise<void> {
+  const { user, isNew } = await authService.handleGoogleCredential(response.credential)
   currentUser = user
 
   if (isNew && user.role === 'guest') {
-    authService.getAdmins().forEach(admin => {
-      notificationService.create({
-        id: crypto.randomUUID(),
+    const admins = await authService.getAdmins()
+    await Promise.all(admins.map(admin =>
+      sendNotification({
         title: 'Nowe konto użytkownika',
         message: `${user.firstName} ${user.lastName} (${user.email}) zarejestrował się i oczekuje na zatwierdzenie.`,
         priority: 'high',
-        date: new Date().toISOString(),
-        isRead: false,
         recipientId: admin.id
       })
-    })
+    ))
   }
 
-  routeByRole()
+  await routeByRole()
 }
 
 function initGoogleAuth(): void {
@@ -196,7 +192,7 @@ function priorityBadgeClass(priority: string): string {
   return 'bg-secondary'
 }
 
-function sendNotification(partial: Omit<Notification, 'id' | 'date' | 'isRead'>): void {
+async function sendNotification(partial: Omit<Notification, 'id' | 'date' | 'isRead'>): Promise<void> {
   if (!currentUser) return
   const notification: Notification = {
     ...partial,
@@ -204,8 +200,8 @@ function sendNotification(partial: Omit<Notification, 'id' | 'date' | 'isRead'>)
     date: new Date().toISOString(),
     isRead: false
   }
-  notificationService.create(notification)
-  updateNotifBadge()
+  await notificationService.create(notification)
+  await updateNotifBadge()
 
   if (
     notification.recipientId === currentUser.id &&
@@ -216,9 +212,9 @@ function sendNotification(partial: Omit<Notification, 'id' | 'date' | 'isRead'>)
   }
 }
 
-function updateNotifBadge(): void {
+async function updateNotifBadge(): Promise<void> {
   if (!currentUser) return
-  const count = notificationService.getUnreadCount(currentUser.id)
+  const count = await notificationService.getUnreadCount(currentUser.id)
   notifCount.textContent = String(count)
   notifCount.style.display = count > 0 ? 'inline' : 'none'
 }
@@ -258,10 +254,10 @@ function showNextPopup(): void {
     setTimeout(showNextPopup, 300)
   }
 
-  document.getElementById('notif-popup-read')!.onclick = () => {
-    notificationService.markAsRead(notif.id)
-    updateNotifBadge()
-    if (currentView === 'notifications') renderNotificationsList()
+  document.getElementById('notif-popup-read')!.onclick = async () => {
+    await notificationService.markAsRead(notif.id)
+    await updateNotifBadge()
+    if (currentView === 'notifications') await renderNotificationsList()
     dismiss()
   }
   document.getElementById('notif-popup-dismiss')!.onclick = dismiss
@@ -274,22 +270,22 @@ function showNextPopup(): void {
 // WIDOKI APLIKACJI
 // =====================
 
-function showView(view: 'main' | 'notifications' | 'users'): void {
+async function showView(view: 'main' | 'notifications' | 'users'): Promise<void> {
   currentView = view
   mainView.style.display = view === 'main' ? '' : 'none'
   notificationsView.style.display = view === 'notifications' ? '' : 'none'
   usersView.style.display = view === 'users' ? '' : 'none'
-  if (view === 'notifications') renderNotificationsList()
-  if (view === 'users') renderUsersView()
+  if (view === 'notifications') await renderNotificationsList()
+  if (view === 'users') await renderUsersView()
 }
 
 // =====================
 // WIDOK POWIADOMIEŃ
 // =====================
 
-function renderNotificationsList(): void {
+async function renderNotificationsList(): Promise<void> {
   if (!currentUser) return
-  const notifications = notificationService.getForUser(currentUser.id)
+  const notifications = await notificationService.getForUser(currentUser.id)
 
   if (notifications.length === 0) {
     notificationsList.innerHTML = '<p class="text-center text-muted mt-5 py-5">Brak powiadomień</p>'
@@ -319,23 +315,24 @@ function renderNotificationsList(): void {
   `).join('')
 
   notificationsList.querySelectorAll('.notif-item').forEach(el => {
-    el.addEventListener('click', () => {
-      showNotificationDetail(el.getAttribute('data-notif-id')!)
+    el.addEventListener('click', async () => {
+      await showNotificationDetail(el.getAttribute('data-notif-id')!)
     })
   })
 }
 
-function showNotificationDetail(id: string): void {
-  const notif = notificationService.getById(id)
+async function showNotificationDetail(id: string): Promise<void> {
+  const notif = await notificationService.getById(id)
   if (!notif) return
 
   if (!notif.isRead) {
-    notificationService.markAsRead(id)
-    updateNotifBadge()
-    if (currentView === 'notifications') renderNotificationsList()
+    await notificationService.markAsRead(id)
+    await updateNotifBadge()
+    if (currentView === 'notifications') await renderNotificationsList()
   }
 
-  const fresh = notificationService.getById(id)!
+  const fresh = await notificationService.getById(id)
+  if (!fresh) return
 
   document.getElementById('notif-detail-title')!.textContent = fresh.title
   document.getElementById('notif-detail-body')!.innerHTML = `
@@ -352,10 +349,10 @@ function showNotificationDetail(id: string): void {
 
   const markReadBtn = document.getElementById('notif-detail-mark-read')!
   markReadBtn.style.display = fresh.isRead ? 'none' : 'inline-block'
-  markReadBtn.onclick = () => {
-    notificationService.markAsRead(id)
-    updateNotifBadge()
-    if (currentView === 'notifications') renderNotificationsList()
+  markReadBtn.onclick = async () => {
+    await notificationService.markAsRead(id)
+    await updateNotifBadge()
+    if (currentView === 'notifications') await renderNotificationsList()
     markReadBtn.style.display = 'none'
   }
 
@@ -363,14 +360,14 @@ function showNotificationDetail(id: string): void {
   new bootstrap.Modal(document.getElementById('notif-detail-modal')).show()
 }
 
-notifBadgeLink.addEventListener('click', e => { e.preventDefault(); showView('notifications') })
-notifNavLink.addEventListener('click', e => { e.preventDefault(); showView('notifications') })
+notifBadgeLink.addEventListener('click', async e => { e.preventDefault(); await showView('notifications') })
+notifNavLink.addEventListener('click', async e => { e.preventDefault(); await showView('notifications') })
 backToMainBtn.addEventListener('click', () => showView('main'))
-markAllReadBtn.addEventListener('click', () => {
+markAllReadBtn.addEventListener('click', async () => {
   if (!currentUser) return
-  notificationService.markAllAsRead(currentUser.id)
-  updateNotifBadge()
-  renderNotificationsList()
+  await notificationService.markAllAsRead(currentUser.id)
+  await updateNotifBadge()
+  await renderNotificationsList()
 })
 
 // =====================
@@ -381,10 +378,10 @@ const ROLE_LABELS: Record<string, string> = {
   guest: 'Gość', developer: 'Developer', devops: 'DevOps', admin: 'Admin'
 }
 
-function renderUsersView(): void {
+async function renderUsersView(): Promise<void> {
   if (!currentUser || currentUser.role !== 'admin') return
 
-  const users = authService.getAllUsers()
+  const users = await authService.getAllUsers()
 
   if (users.length === 0) {
     usersListEl.innerHTML = '<p class="text-center text-muted">Brak użytkowników</p>'
@@ -437,17 +434,18 @@ function renderUsersView(): void {
   `
 
   usersListEl.querySelectorAll('.role-select').forEach(selectEl => {
-    selectEl.addEventListener('change', () => {
+    selectEl.addEventListener('change', async () => {
       const tr = selectEl.closest('tr') as HTMLElement
       const userId = tr.dataset.userId!
       const newRole = (selectEl as HTMLSelectElement).value as UserRole
-      const u = authService.getAllUsers().find(x => x.id === userId)!
+      const allUsers = await authService.getAllUsers()
+      const u = allUsers.find(x => x.id === userId)!
       const oldRole = u.role
       u.role = newRole
-      authService.updateUser(u)
+      await authService.updateUser(u)
 
       if (newRole !== oldRole) {
-        sendNotification({
+        await sendNotification({
           title: 'Zmiana roli',
           message: `Twoja rola została zmieniona z „${ROLE_LABELS[oldRole]}" na „${ROLE_LABELS[newRole]}".`,
           priority: 'medium',
@@ -458,27 +456,28 @@ function renderUsersView(): void {
   })
 
   usersListEl.querySelectorAll('.toggle-block').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const tr = btn.closest('tr') as HTMLElement
       const userId = tr.dataset.userId!
-      const u = authService.getAllUsers().find(x => x.id === userId)!
+      const allUsers = await authService.getAllUsers()
+      const u = allUsers.find(x => x.id === userId)!
       u.blocked = !u.blocked
-      authService.updateUser(u)
-      renderUsersView()
+      await authService.updateUser(u)
+      await renderUsersView()
     })
   })
 }
 
-usersNavLink?.addEventListener('click', e => { e.preventDefault(); showView('users') })
+usersNavLink?.addEventListener('click', async e => { e.preventDefault(); await showView('users') })
 backToMainFromUsersBtn?.addEventListener('click', () => showView('main'))
 
 // =====================
 // PROJEKTY
 // =====================
 
-function renderProjects(): void {
+async function renderProjects(): Promise<void> {
   projectList.innerHTML = ''
-  const projects = projectService.getAll()
+  const projects = await projectService.getAll()
   const activeProjectId = authService.getActiveProjectId()
 
   projects.forEach(project => {
@@ -495,10 +494,10 @@ function renderProjects(): void {
       </div>
     `
 
-    div.querySelector('.project-info')?.addEventListener('click', () => {
+    div.querySelector('.project-info')?.addEventListener('click', async () => {
       authService.setActiveProject(project.id)
-      renderProjects()
-      renderStories()
+      await renderProjects()
+      await renderStories()
     })
 
     div.querySelector('.edit')?.addEventListener('click', e => {
@@ -509,22 +508,22 @@ function renderProjects(): void {
       addBtn.innerText = 'Zapisz projekt'
     })
 
-    div.querySelector('.delete')?.addEventListener('click', e => {
+    div.querySelector('.delete')?.addEventListener('click', async e => {
       e.stopPropagation()
-      projectService.delete(project.id)
-      renderProjects()
-      renderStories()
+      await projectService.delete(project.id)
+      await renderProjects()
+      await renderStories()
     })
 
     projectList.appendChild(div)
   })
 }
 
-addBtn.addEventListener('click', () => {
+addBtn.addEventListener('click', async () => {
   if (!nameInput.value.trim() || !currentUser) return
 
   if (editingProjectId) {
-    projectService.update({
+    await projectService.update({
       id: editingProjectId,
       name: nameInput.value,
       description: descInput.value
@@ -537,30 +536,29 @@ addBtn.addEventListener('click', () => {
       name: nameInput.value,
       description: descInput.value
     }
-    projectService.create(newProject)
+    await projectService.create(newProject)
 
-    authService.getAllUsers()
-      .filter(u => u.role === 'admin')
-      .forEach(admin => {
-        sendNotification({
-          title: 'Utworzono nowy projekt',
-          message: `Projekt „${newProject.name}" został utworzony.`,
-          priority: 'high',
-          recipientId: admin.id
-        })
+    const admins = await authService.getAdmins()
+    await Promise.all(admins.map(admin =>
+      sendNotification({
+        title: 'Utworzono nowy projekt',
+        message: `Projekt „${newProject.name}" został utworzony.`,
+        priority: 'high',
+        recipientId: admin.id
       })
+    ))
   }
 
   nameInput.value = ''
   descInput.value = ''
-  renderProjects()
+  await renderProjects()
 })
 
 // =====================
 // HISTORYJKI
 // =====================
 
-addStoryBtn.addEventListener('click', () => {
+addStoryBtn.addEventListener('click', async () => {
   const projectId = authService.getActiveProjectId()
   if (!projectId) { alert('Najpierw wybierz projekt!'); return }
   if (!storyNameInput.value.trim() || !currentUser) return
@@ -576,13 +574,13 @@ addStoryBtn.addEventListener('click', () => {
     status: 'todo'
   }
 
-  storyService.create(newStory)
+  await storyService.create(newStory)
   storyNameInput.value = ''
   storyDescInput.value = ''
-  renderStories()
+  await renderStories()
 })
 
-function renderStories(): void {
+async function renderStories(): Promise<void> {
   const projectId = authService.getActiveProjectId()
   if (!projectId) {
     storySection.style.display = 'none'
@@ -590,7 +588,7 @@ function renderStories(): void {
   }
 
   storySection.style.display = 'block'
-  const stories = storyService.getAll(projectId)
+  const stories = await storyService.getAll(projectId)
 
   const cols = {
     todo: document.getElementById('col-todo')!,
@@ -609,17 +607,17 @@ function renderStories(): void {
       <button class="btn btn-sm btn-outline-secondary next mt-1">➔</button>
     `
 
-    div.addEventListener('click', () => {
+    div.addEventListener('click', async () => {
       selectedStoryId = story.id
-      renderTasks(story.id)
+      await renderTasks(story.id)
     })
 
-    div.querySelector('.next')?.addEventListener('click', e => {
+    div.querySelector('.next')?.addEventListener('click', async e => {
       e.stopPropagation()
       const next: Record<Status, Status> = { todo: 'doing', doing: 'done', done: 'todo' }
       story.status = next[story.status]
-      storyService.update(story)
-      renderStories()
+      await storyService.update(story)
+      await renderStories()
     })
 
     cols[story.status].appendChild(div)
@@ -630,9 +628,11 @@ function renderStories(): void {
 // TASKI
 // =====================
 
-function renderTasks(storyId: string): void {
-  const tasks = taskService.getByStory(storyId)
-  const allUsers = authService.getAllUsers()
+async function renderTasks(storyId: string): Promise<void> {
+  const [tasks, allUsers] = await Promise.all([
+    taskService.getByStory(storyId),
+    authService.getAllUsers()
+  ])
 
   const cols = {
     todo: document.getElementById('col-todo')!,
@@ -655,18 +655,18 @@ function renderTasks(storyId: string): void {
       </div>
     `
 
-    div.addEventListener('click', () => showTaskDetails(task))
+    div.addEventListener('click', async () => showTaskDetails(task))
 
-    div.querySelector('.done-task')?.addEventListener('click', e => {
+    div.querySelector('.done-task')?.addEventListener('click', async e => {
       e.stopPropagation()
-      finishTask(task)
-      renderTasks(storyId)
+      await finishTask(task)
+      await renderTasks(storyId)
     })
 
-    div.querySelector('.delete-task')?.addEventListener('click', e => {
+    div.querySelector('.delete-task')?.addEventListener('click', async e => {
       e.stopPropagation()
-      deleteTask(task)
-      renderTasks(storyId)
+      await deleteTask(task)
+      await renderTasks(storyId)
     })
 
     cols[task.status].appendChild(div)
@@ -677,16 +677,16 @@ function renderTasks(storyId: string): void {
 // AKCJE TASKÓW
 // =====================
 
-function assignUserToTask(task: Task, userId: string): void {
+async function assignUserToTask(task: Task, userId: string): Promise<void> {
   task.assignedUserId = userId
   task.status = 'doing'
   task.startedAt = new Date().toISOString()
-  taskService.update(task)
+  await taskService.update(task)
 
-  const story = storyService.getById(task.storyId)
+  const story = await storyService.getById(task.storyId)
 
   if (story) {
-    sendNotification({
+    await sendNotification({
       title: 'Zadanie w trakcie realizacji',
       message: `Task „${task.name}" w historyjce „${story.name}" jest teraz w trakcie realizacji.`,
       priority: 'low',
@@ -694,7 +694,7 @@ function assignUserToTask(task: Task, userId: string): void {
     })
   }
 
-  sendNotification({
+  await sendNotification({
     title: 'Przypisano Cię do zadania',
     message: `Zostałeś przypisany do zadania „${task.name}"${story ? ` w historyjce „${story.name}"` : ''}.`,
     priority: 'high',
@@ -702,15 +702,15 @@ function assignUserToTask(task: Task, userId: string): void {
   })
 }
 
-function finishTask(task: Task): void {
+async function finishTask(task: Task): Promise<void> {
   task.status = 'done'
   task.finishedAt = new Date().toISOString()
-  taskService.update(task)
+  await taskService.update(task)
 
-  const story = storyService.getById(task.storyId)
+  const story = await storyService.getById(task.storyId)
 
   if (story) {
-    sendNotification({
+    await sendNotification({
       title: 'Zadanie ukończone',
       message: `Task „${task.name}" w historyjce „${story.name}" został oznaczony jako ukończony.`,
       priority: 'medium',
@@ -718,20 +718,20 @@ function finishTask(task: Task): void {
     })
   }
 
-  const tasks = taskService.getByStory(task.storyId)
+  const tasks = await taskService.getByStory(task.storyId)
   const allDone = tasks.every(t => t.status === 'done')
   if (allDone && story) {
     story.status = 'done'
-    storyService.update(story)
+    await storyService.update(story)
   }
 }
 
-function deleteTask(task: Task): void {
-  const story = storyService.getById(task.storyId)
-  taskService.delete(task.id)
+async function deleteTask(task: Task): Promise<void> {
+  const story = await storyService.getById(task.storyId)
+  await taskService.delete(task.id)
 
   if (story) {
-    sendNotification({
+    await sendNotification({
       title: 'Zadanie usunięte',
       message: `Task „${task.name}" został usunięty z historyjki „${story.name}".`,
       priority: 'medium',
@@ -744,9 +744,9 @@ function deleteTask(task: Task): void {
 // SZCZEGÓŁY TASKA (MODAL)
 // =====================
 
-function showTaskDetails(task: Task): void {
+async function showTaskDetails(task: Task): Promise<void> {
   selectedTask = task
-  const allUsers = authService.getAllUsers()
+  const allUsers = await authService.getAllUsers()
   const assigned = allUsers.find(u => u.id === task.assignedUserId)
 
   document.getElementById('taskDetails')!.innerHTML = `
@@ -765,10 +765,10 @@ function showTaskDetails(task: Task): void {
   new bootstrap.Modal(document.getElementById('taskModal')).show()
 }
 
-finishTaskBtn.addEventListener('click', () => {
+finishTaskBtn.addEventListener('click', async () => {
   if (!selectedTask) return
-  finishTask(selectedTask)
-  if (selectedTask.storyId) renderTasks(selectedTask.storyId)
+  await finishTask(selectedTask)
+  if (selectedTask.storyId) await renderTasks(selectedTask.storyId)
   // @ts-ignore
   bootstrap.Modal.getInstance(document.getElementById('taskModal'))?.hide()
 })
@@ -777,7 +777,7 @@ finishTaskBtn.addEventListener('click', () => {
 // DODAWANIE TASKA
 // =====================
 
-addTaskBtn.addEventListener('click', () => {
+addTaskBtn.addEventListener('click', async () => {
   if (!selectedStoryId) { alert('Najpierw wybierz historyjkę!'); return }
   if (!taskNameInput.value.trim() || !currentUser) return
 
@@ -792,11 +792,11 @@ addTaskBtn.addEventListener('click', () => {
     createdAt: new Date().toISOString()
   }
 
-  taskService.create(task)
+  await taskService.create(task)
 
-  const story = storyService.getById(selectedStoryId)
+  const story = await storyService.getById(selectedStoryId)
   if (story) {
-    sendNotification({
+    await sendNotification({
       title: 'Nowe zadanie w historyjce',
       message: `Dodano zadanie „${task.name}" do historyjki „${story.name}".`,
       priority: 'medium',
@@ -805,7 +805,7 @@ addTaskBtn.addEventListener('click', () => {
   }
 
   if (taskUserSelect.value) {
-    assignUserToTask(task, taskUserSelect.value)
+    await assignUserToTask(task, taskUserSelect.value)
   }
 
   taskNameInput.value = ''
@@ -813,15 +813,15 @@ addTaskBtn.addEventListener('click', () => {
   taskTimeInput.value = ''
   taskUserSelect.value = ''
 
-  renderTasks(selectedStoryId)
+  await renderTasks(selectedStoryId)
 })
 
 // =====================
 // UŻYTKOWNICY (task assignment)
 // =====================
 
-function loadUsers(): void {
-  const users = authService.getAllUsers().filter(u => !u.blocked && u.role !== 'guest')
+async function loadUsers(): Promise<void> {
+  const users = (await authService.getAllUsers()).filter(u => !u.blocked && u.role !== 'guest')
   taskUserSelect.innerHTML = '<option value="">Wybierz</option>'
   users.forEach(u => {
     const option = document.createElement('option')
@@ -848,5 +848,8 @@ setTheme(localStorage.getItem('theme') === 'dark')
 // INIT
 // =====================
 
-initGoogleAuth()
-routeByRole()
+;(async () => {
+  await initStorage()
+  initGoogleAuth()
+  await routeByRole()
+})()

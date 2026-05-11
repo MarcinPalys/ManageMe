@@ -4,7 +4,7 @@ import type { User } from './model'
 const _auth = new AuthService()
 
 export class SessionService {
-  getCurrentUser(): User | null {
+  async getCurrentUser(): Promise<User | null> {
     return _auth.getCurrentUser()
   }
 
@@ -16,7 +16,7 @@ export class SessionService {
     return _auth.getActiveProjectId()
   }
 
-  getAllUsers(): User[] {
+  async getAllUsers(): Promise<User[]> {
     return _auth.getAllUsers()
   }
 }

@@ -1,121 +1,60 @@
-import type { Project, Story, Task } from "./model"
+import type { Project, Story, Task } from './model'
+import { getAdapter } from './storage'
 
-const PROJECTS_KEY = "projects"
-const STORIES_KEY = "stories"
-const TASKS_KEY = "tasks";
-
-// --- SERWIS PROJEKTÓW ---
 export class ProjectService {
-  getAll(): Project[] {
-    const data = localStorage.getItem(PROJECTS_KEY)
-    return data ? JSON.parse(data) : []
+  async getAll(): Promise<Project[]> {
+    return getAdapter().getProjects()
   }
 
-  saveAll(projects: Project[]) {
-    localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects))
+  async create(project: Project): Promise<void> {
+    return getAdapter().createProject(project)
   }
 
-  create(project: Project) {
-    const projects = this.getAll()
-    projects.push(project)
-    this.saveAll(projects)
+  async update(project: Project): Promise<void> {
+    return getAdapter().updateProject(project)
   }
 
-  update(updatedProject: Project) {
-    const projects = this.getAll().map(p =>
-      p.id === updatedProject.id ? updatedProject : p
-    )
-    this.saveAll(projects)
-  }
-
-  delete(id: string) {
-    const projects = this.getAll().filter(p => p.id !== id)
-    this.saveAll(projects)
-    
-    const allStories = this.getGlobalStories()
-    const filteredStories = allStories.filter(s => s.projectId !== id)
-    localStorage.setItem(STORIES_KEY, JSON.stringify(filteredStories))
-  }
-
-  private getGlobalStories(): Story[] {
-    const data = localStorage.getItem(STORIES_KEY)
-    return data ? JSON.parse(data) : []
+  async delete(id: string): Promise<void> {
+    return getAdapter().deleteProject(id)
   }
 }
 
 export class StoryService {
-  getAll(projectId: string): Story[] {
-    const data = localStorage.getItem(STORIES_KEY)
-    const allStories: Story[] = data ? JSON.parse(data) : []
-    return allStories.filter(story => story.projectId === projectId)
+  async getAll(projectId: string): Promise<Story[]> {
+    return getAdapter().getStoriesByProject(projectId)
   }
 
-  private getAllFromStorage(): Story[] {
-    const data = localStorage.getItem(STORIES_KEY)
-    return data ? JSON.parse(data) : []
+  async getById(id: string): Promise<Story | undefined> {
+    return getAdapter().getStoryById(id)
   }
 
-  saveAll(storiesInProject: Story[], projectId: string) {
-    const allStories = this.getAllFromStorage()
-    const otherProjectsStories = allStories.filter(s => s.projectId !== projectId)
-    const updatedTotalList = [...otherProjectsStories, ...storiesInProject]
-    
-    localStorage.setItem(STORIES_KEY, JSON.stringify(updatedTotalList))
+  async create(story: Story): Promise<void> {
+    return getAdapter().createStory(story)
   }
 
-  create(story: Story) {
-    const allStories = this.getAllFromStorage()
-    allStories.push(story)
-    localStorage.setItem(STORIES_KEY, JSON.stringify(allStories))
+  async update(story: Story): Promise<void> {
+    return getAdapter().updateStory(story)
   }
 
-  update(updatedStory: Story) {
-    const allStories = this.getAllFromStorage()
-    const updatedList = allStories.map(s =>
-      s.id === updatedStory.id ? updatedStory : s
-    )
-    localStorage.setItem(STORIES_KEY, JSON.stringify(updatedList))
-  }
-
-  delete(id: string) {
-    const allStories = this.getAllFromStorage()
-    const filteredList = allStories.filter(s => s.id !== id)
-    localStorage.setItem(STORIES_KEY, JSON.stringify(filteredList))
-  }
-
-  getById(id: string): Story | undefined {
-    return this.getAllFromStorage().find(s => s.id === id)
+  async delete(id: string): Promise<void> {
+    return getAdapter().deleteStory(id)
   }
 }
+
 export class TaskService {
-  private getAllFromStorage(): Task[] {
-    const data = localStorage.getItem(TASKS_KEY);
-    return data ? JSON.parse(data) : [];
+  async getByStory(storyId: string): Promise<Task[]> {
+    return getAdapter().getTasksByStory(storyId)
   }
 
-  getAll(): Task[] {
-    return this.getAllFromStorage();
+  async create(task: Task): Promise<void> {
+    return getAdapter().createTask(task)
   }
 
-  create(task: Task) {
-    const tasks = this.getAllFromStorage();
-    tasks.push(task);
-    localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
+  async update(task: Task): Promise<void> {
+    return getAdapter().updateTask(task)
   }
 
-  update(task: Task) {
-    const tasks = this.getAllFromStorage().map(t =>
-      t.id === task.id ? task : t
-    );
-    localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
-  }
-
-  delete(id: string) {
-    const tasks = this.getAllFromStorage().filter(t => t.id !== id);
-    localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
-  }
-
-  getByStory(storyId: string): Task[] {
-    return this.getAllFromStorage().filter(t => t.storyId === storyId);
+  async delete(id: string): Promise<void> {
+    return getAdapter().deleteTask(id)
   }
 }

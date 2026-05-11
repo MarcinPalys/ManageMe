@@ -1,7 +1,7 @@
 import type { User, UserRole } from './model'
 import { SUPER_ADMIN_EMAIL } from './config'
+import { getAdapter } from './storage'
 
-const USERS_KEY = 'app_users'
 const CURRENT_USER_KEY = 'current_user_id'
 const ACTIVE_PROJECT_KEY = 'active_project_id'
 
@@ -19,25 +19,16 @@ function decodeGoogleJwt(token: string): GoogleJwtPayload {
 }
 
 export class AuthService {
-  private getStoredUsers(): User[] {
-    const data = localStorage.getItem(USERS_KEY)
-    return data ? JSON.parse(data) : []
-  }
-
-  private saveUsers(users: User[]): void {
-    localStorage.setItem(USERS_KEY, JSON.stringify(users))
-  }
-
-  getCurrentUser(): User | null {
+  async getCurrentUser(): Promise<User | null> {
     const id = localStorage.getItem(CURRENT_USER_KEY)
     if (!id) return null
-    return this.getStoredUsers().find(u => u.id === id) ?? null
+    const users = await getAdapter().getUsers()
+    return users.find(u => u.id === id) ?? null
   }
 
-  handleGoogleCredential(credential: string): { user: User; isNew: boolean } {
+  async handleGoogleCredential(credential: string): Promise<{ user: User; isNew: boolean }> {
     const payload = decodeGoogleJwt(credential)
-    const users = this.getStoredUsers()
-    const existing = users.find(u => u.email === payload.email)
+    const existing = await getAdapter().getUserByEmail(payload.email)
 
     if (existing) {
       localStorage.setItem(CURRENT_USER_KEY, existing.id)
@@ -54,8 +45,7 @@ export class AuthService {
       blocked: false
     }
 
-    users.push(user)
-    this.saveUsers(users)
+    await getAdapter().createUser(user)
     localStorage.setItem(CURRENT_USER_KEY, user.id)
     return { user, isNew: true }
   }
@@ -64,17 +54,17 @@ export class AuthService {
     localStorage.removeItem(CURRENT_USER_KEY)
   }
 
-  getAllUsers(): User[] {
-    return this.getStoredUsers()
+  async getAllUsers(): Promise<User[]> {
+    return getAdapter().getUsers()
   }
 
-  getAdmins(): User[] {
-    return this.getStoredUsers().filter(u => u.role === 'admin')
+  async getAdmins(): Promise<User[]> {
+    const users = await getAdapter().getUsers()
+    return users.filter(u => u.role === 'admin')
   }
 
-  updateUser(user: User): void {
-    const users = this.getStoredUsers().map(u => u.id === user.id ? user : u)
-    this.saveUsers(users)
+  async updateUser(user: User): Promise<void> {
+    return getAdapter().updateUser(user)
   }
 
   setActiveProject(projectId: string): void {
