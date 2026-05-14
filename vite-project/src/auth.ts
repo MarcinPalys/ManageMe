@@ -15,7 +15,8 @@ interface GoogleJwtPayload {
 
 function decodeGoogleJwt(token: string): GoogleJwtPayload {
   const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
-  return JSON.parse(atob(base64))
+  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0))
+  return JSON.parse(new TextDecoder().decode(bytes))
 }
 
 export class AuthService {
@@ -69,6 +70,10 @@ export class AuthService {
 
   setActiveProject(projectId: string): void {
     localStorage.setItem(ACTIVE_PROJECT_KEY, projectId)
+  }
+
+  clearActiveProject(): void {
+    localStorage.removeItem(ACTIVE_PROJECT_KEY)
   }
 
   getActiveProjectId(): string | null {

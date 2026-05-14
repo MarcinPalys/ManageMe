@@ -44,6 +44,9 @@ const taskUserSelect = document.getElementById('taskUser') as HTMLSelectElement
 const addTaskBtn = document.getElementById('addTaskBtn') as HTMLButtonElement
 const themeToggle = document.getElementById('themeToggle') as HTMLInputElement
 const finishTaskBtn = document.getElementById('finishTaskBtn') as HTMLButtonElement
+const taskViewHeader = document.getElementById('task-view-header') as HTMLElement
+const backToStoriesBtn = document.getElementById('backToStoriesBtn') as HTMLButtonElement
+const selectedStoryNameEl = document.getElementById('selected-story-name') as HTMLElement
 
 // --- DOM: POWIADOMIENIA ---
 const notifCount = document.getElementById('notif-count') as HTMLElement
@@ -277,6 +280,7 @@ async function showView(view: 'main' | 'notifications' | 'users'): Promise<void>
   usersView.style.display = view === 'users' ? '' : 'none'
   if (view === 'notifications') await renderNotificationsList()
   if (view === 'users') await renderUsersView()
+  if (view === 'main') await renderStories()
 }
 
 // =====================
@@ -510,6 +514,9 @@ async function renderProjects(): Promise<void> {
 
     div.querySelector('.delete')?.addEventListener('click', async e => {
       e.stopPropagation()
+      if (authService.getActiveProjectId() === project.id) {
+        authService.clearActiveProject()
+      }
       await projectService.delete(project.id)
       await renderProjects()
       await renderStories()
@@ -581,6 +588,9 @@ addStoryBtn.addEventListener('click', async () => {
 })
 
 async function renderStories(): Promise<void> {
+  selectedStoryId = null
+  taskViewHeader.classList.add('d-none')
+
   const projectId = authService.getActiveProjectId()
   if (!projectId) {
     storySection.style.display = 'none'
@@ -604,7 +614,10 @@ async function renderStories(): Promise<void> {
     div.innerHTML = `
       <b>${story.name}</b>
       <small class="text-muted d-block">${story.description || ''}</small>
-      <button class="btn btn-sm btn-outline-secondary next mt-1">➔</button>
+      <div class="d-flex gap-1 mt-1">
+        <button class="btn btn-sm btn-outline-secondary next">➔</button>
+        <button class="btn btn-sm btn-outline-danger delete-story">🗑️</button>
+      </div>
     `
 
     div.addEventListener('click', async () => {
@@ -620,6 +633,13 @@ async function renderStories(): Promise<void> {
       await renderStories()
     })
 
+    div.querySelector('.delete-story')?.addEventListener('click', async e => {
+      e.stopPropagation()
+      await storyService.delete(story.id)
+      if (selectedStoryId === story.id) selectedStoryId = null
+      await renderStories()
+    })
+
     cols[story.status].appendChild(div)
   })
 }
@@ -629,6 +649,10 @@ async function renderStories(): Promise<void> {
 // =====================
 
 async function renderTasks(storyId: string): Promise<void> {
+  const story = await storyService.getById(storyId)
+  selectedStoryNameEl.textContent = story ? `Taski: ${story.name}` : 'Taski'
+  taskViewHeader.classList.remove('d-none')
+
   const [tasks, allUsers] = await Promise.all([
     taskService.getByStory(storyId),
     authService.getAllUsers()
@@ -772,6 +796,8 @@ finishTaskBtn.addEventListener('click', async () => {
   // @ts-ignore
   bootstrap.Modal.getInstance(document.getElementById('taskModal'))?.hide()
 })
+
+backToStoriesBtn.addEventListener('click', () => renderStories())
 
 // =====================
 // DODAWANIE TASKA
